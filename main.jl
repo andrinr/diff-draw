@@ -1,77 +1,96 @@
-using Plots, CUDA, Enzyme
+using Plots, CUDA, Distances
 
 dt = Float32(0.01)
-N = 10^3
+N = 1000
 M = 10
-steps = 20
-epsilon = 10^-5
+steps = 50
+epsilon = 1e-6
 
-struct Particle
-    pos_x::CuArray{Float32, 1}
-    pos_y::CuArray{Float32, 1}
-    vel_x::CuArray{Float32, 1}
-    vel_y::CuArray{Float32, 1}
-    mass::CuArray{Float32, 1}
+struct Particle{T}
+    pos_x::T
+    pos_y::T
+    vel_x::T
+    vel_y::T
 end
 
-println("Initializing particles...")
+struct Attractor{T}
+    pos_x::T
+    pos_y::T
+    strength::T
+end
 
-particles = Particle(
-    CUDA.rand(Float32, N),
-    CUDA.rand(Float32, N),
-    CUDA.rand(Float32, N),
-    CUDA.rand(Float32, N),
-    CUDA.rand(Float32, N)
+particles = Particle{CuArray{Float32, 1}}(
+    CUDA.rand(Float32, N) .- 0.5,
+    CUDA.rand(Float32, N) .- 0.5,
+    CUDA.rand(Float32, N) .- 0.5,
+    CUDA.rand(Float32, N) .- 0.5
 )
 
-println("Particles initialized!")
+pos_x_h_0 = Array(particles.pos_x)
+pos_y_h_0 = Array(particles.pos_y)
 
-function step!(particles :: Particle, dt :: Float32)
-    diff_x = particles.pos_x .- particles.pos_x'
-    diff_y = particles.pos_y .- particles.pos_y'
+attractors = Attractor{CuArray{Float32, 1}}(
+    CUDA.rand(Float32, M) .- 0.5,
+    CUDA.rand(Float32, M) .- 0.5,
+    CUDA.rand(Float32, M)
+)
 
-    distance = (diff_x.^2 .+ diff_y.^2) .+ epsilon
+function step!(particles :: Particle, attractors :: Attractor, dt :: Float32)
+    diff_x = particles.pos_x .- attractors.pos_x'
+    diff_y = particles.pos_y .- attractors.pos_y'
+
+    distance_sq = (diff_x.^2 .+ diff_y.^2) .+ epsilon
     
-    forces = (particles.mass .* particles.mass') ./ distance
+    forces = attractors.strength' ./ distance_sq
 
-    distance = sqrt.(distance)
+    forces_x = forces .* diff_x
+    forces_y = forces .* diff_y
 
-    forces_x = (forces .* diff_x) ./ distance
-    forces_y = (forces .* diff_y) ./ distance
-
-    particles.vel_x .-= sum(forces_x, dims=2) .* dt
-    particles.vel_y .-= sum(forces_y, dims=2) .* dt
+    particles.vel_x .-= sum(forces_x, dims=2)
+    particles.vel_y .-= sum(forces_y, dims=2)
 
     particles.pos_x .+= particles.vel_x .* dt
     particles.pos_y .+= particles.vel_y .* dt
 
 end
 
-function simulate(particles :: Particle, steps :: Int, dt :: Float32)
-    for i in 1:steps
-        step!(particles, dt)
-    end
-end
-
 println("Running simulation...")
 
-simulate(particles, steps, dt)
+for i in 1:steps
+    step!(particles, attractors, dt)
+end
 
 println("Done!")
 
 # transfer particles positions to host
-pos_x_h = Array(particles.pos_x)
-pos_y_h = Array(particles.pos_y)
+pos_x_h_T = Array(particles.pos_x)
+pos_y_h_T = Array(particles.pos_y)
 
-# dark theme
-theme(:dark)
+attr_pos_x_h = Array(attractors.pos_x)
+attr_pos_y_h = Array(attractors.pos_y)
 
-# scatter with no stroke / borders
-plt = scatter(
-    pos_x_h, pos_y_h, 
-    label="Particles", markersize=1, 
-    markercolor=:white, markerstrokewidth=0)
+p1 = scatter(
+    pos_x_h_0, pos_y_h_0,
+    label="Particle", markersize=2, 
+    markerstrokewidth=0, xlims=(-1, 1), ylims=(-1, 1))
+
+p1 = scatter!(
+    attr_pos_x_h, attr_pos_y_h,
+    label="Attractor", markersize=10, markerstrokewidth=0)
+
+p2 = scatter(
+    pos_x_h_T, pos_y_h_T,
+    label="Particle", markersize=2, 
+    markerstrokewidth=0, xlims=(-5, 5), ylims=(-5, 5))
+
+p2 = scatter!(
+    attr_pos_x_h, attr_pos_y_h,
+    label="Attractor", markersize=4, markerstrokewidth=0)
+
+plt = plot(p1, p2, layout=(1, 2), size=(1200, 600))
+
+# limit 
 
 gui(plt)
 
-savefig(plt, "imgs/particles.png")
+savefig(plt, "particles.png")
