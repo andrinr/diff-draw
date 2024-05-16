@@ -2,12 +2,6 @@ module Particles
 
 using Plots, CUDA, Random, Enzyme
 
-dt = Float32(0.01)
-N = 10000
-M = 10
-epsilon = 1e-6
-steps = 100
-
 function step!(
     pos_before :: AbstractArray{Float32, 2},
     pos_after :: AbstractArray{Float32, 2},
@@ -36,19 +30,6 @@ function step!(
     return nothing
 
 end
-
-println("Initializing...")
-pos_0_h = zeros(Float32, (steps, 2, N))
-pos_0_h[1, :, :] = Random.rand(Float32, (2, N)) .- 0.5
-
-vel_0_h = zeros(Float32, (steps, 2, N))
-attr_pos_h = Random.rand(Float32, (2, M)) .- 0.5
-attr_s_h = Random.rand(Float32, M)
-
-pos_d = CuArray{Float32}(pos_0_h)
-vel_d = CuArray{Float32}(vel_0_h)
-attr_pos_d = CuArray{Float32}(attr_pos_h)
-attr_s_d = CuArray{Float32}(attr_s_h)
 
 function forward!(
     pos_hist :: AbstractArray{Float32, 3},
@@ -81,41 +62,69 @@ function backward!(
     steps :: Int) :: Nothing
 
     zero_h = zeros(Float32, (2, N))
-    adj_ping_pong_h = zeros(Float32, (2, 2, N))
-    adj_ping_pong_h[1, 1, 1] = 1
+    d_pos_h = zeros(Float32, (2, 2, N))
+    d_pos_h[1, 1, 1] = 1
 
     zero = CuArray{Float32}(zero_h)
-    adj_ping_pong = CuArray{Float32}(adj_ping_pong_h)
+    d_pos = CuArray{Float32}(d_pos_h)
 
     for i in steps:-1:1
 
         pos_before = view(pos_hist, i, :, :)
         vel_before = view(vel_hist, i, :, :)
 
-        view(adj_ping_pong, (i+1) % 2, :, :) .= 0
-        pos_after_adj = view(adj_ping_pong, i % 2, :, :)
-        pos_before_adj = view(adj_ping_pong, (i+1) % 2, :, :)
+        d_pos_after = view(d_pos, i % 2 + 1, :, :)
+        d_pos_before = view(d_pos, (i+1) % 2 + 1, :, :)
 
-        pos_after_adj .= 0
+        d_pos_after .= 0
+
+        println(size(d_pos_before))
+        println(size(d_pos_after))
+        println(size(pos_before))
+        println(size(zero))
+        println(pos_before.indices)
+        println(d_pos_before.indices)
+
+        # We are allowed to supress the Error " AssertionError: x.indices == dx.indices"
+        # because the check is too strict for views (https://enzyme.mit.edu/julia/stable/faq/#Identical-types-in-Duplicated-/-Memory-Layout)
 
         autodiff(
             Reverse,
             step,
-            Duplicated(pos_before, pos_before_adj)),
-            Duplicated(zero, pos_after_adj),
+            Duplicated(pos_before, d_pos_before),
+            Duplicated(zero, d_pos_after),
             Const(vel_before),
             Const(zero),
-            Const(attr_pos),    
+            Const(attr_pos),
             Const(attr_s),
             Const(dt))
 
         if i == 1
-            return view(adj_ping_pong, i % 2, :, :)
+            return view(d_pos, i % 2 + 1, :, :)
         end
 
     end
 
 end
+
+dt = Float32(0.01)
+N = 10000
+M = 10
+epsilon = 1e-6
+steps = 100
+
+println("Initializing...")
+pos_0_h = zeros(Float32, (steps, 2, N))
+pos_0_h[1, :, :] = Random.rand(Float32, (2, N)) .- 0.5
+
+vel_0_h = zeros(Float32, (steps, 2, N))
+attr_pos_h = Random.rand(Float32, (2, M)) .- 0.5
+attr_s_h = Random.rand(Float32, M)
+
+pos_d = CuArray{Float32}(pos_0_h)
+vel_d = CuArray{Float32}(vel_0_h)
+attr_pos_d = CuArray{Float32}(attr_pos_h)
+attr_s_d = CuArray{Float32}(attr_s_h)
 
 println("Forward pass...")
 # profile = CUDA.@profile
@@ -165,6 +174,6 @@ plt = plot(p1, p2, layout=(1, 2), size=(1200, 600))
 
 gui(plt)
 
-savefig(plt, "particles.png")
+savefig(plt, "imgs/particles.png")
 
 end
